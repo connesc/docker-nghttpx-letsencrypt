@@ -1,0 +1,2 @@
+#!/bin/bash
+docker run --rm --privileged multiarch/qemu-user-static:4.2.0-6 --reset -p yes
