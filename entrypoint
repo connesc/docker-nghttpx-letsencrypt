@@ -1,0 +1,39 @@
+#!/bin/sh
+
+lego_args="$(jq -nc --args '$ARGS.positional' -- $LEGO_ARGS --path "$LEGO_PATH")"
+
+function list {
+    if [[ -d "$LEGO_PATH/certificates" ]]
+    then find "$LEGO_PATH/certificates" -maxdepth 1 -type f -name '*.json' -print0 | xargs -0r jq -nc '[inputs.domain]'
+    else echo '{}'
+    fi
+}
+
+function renew_script {
+    jq -r --argjson lego_args "$lego_args" --args '
+        .[]
+        | @sh "lego \([$lego_args[], "-d", ., "renew", $ARGS.positional[]])"
+    ' -- "$@"
+}
+
+function init_script {
+    certs="$(list)"
+
+    jq -nr --argjson lego_args "$lego_args" --argjson certs "$certs" --args '
+        ($certs | map({key: .}) | from_entries) as $existing
+        | $ARGS.positional[]
+        | split(",")
+        | .[0] as $name
+        | select($name | in($existing) | not)
+        | @sh "lego \([$lego_args[], (.[] | "-d", .), "run"])"
+    ' -- "$@"
+
+    echo "$certs" | renew_script
+}
+
+eval "$(init_script "$@")"
+
+printf '#!/bin/sh\n%s\n' "$(list | renew_script --renew-hook 's6-svc -h /service/nghttpx')" > /etc/periodic/weekly/lego-renew
+chmod +x /etc/periodic/weekly/lego-renew
+
+exec s6-svscan /service
